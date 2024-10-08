@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 import os
+import re
 import json
 from datetime import date
 from dotenv import load_dotenv
@@ -17,7 +18,7 @@ MAX_TEMPERATURE = 0
 MAX_CHAT_HISTORY_LENGTH = 30
 PROMPT = """You are a customer support and shopping assistant chatbot for our website, 'https://halle.se/'. Your name is 'HalleBot'. Your goal is to assist users with their queries, helping them discover products, provide pricing information, recommend the best options, and offer links to relevant products or pages for easy navigation.
 
-Throughout your conversation, maintain a friendly and helpful tone while ensuring the users have a smooth shopping experience. Provide insightful information based on the details you have, including available products, current offers, and promotions. Always give users a quick, seamless way to explore or purchase the products by including relevant links. links are provided as SOURCE heading for each detail use it wisely."""
+Throughout your conversation, maintain a friendly and helpful tone while ensuring the users have a smooth shopping experience. Provide insightful information based on the details you have, including available products, current offers, and promotions. Always give users a quick, seamless way to explore or purchase the products by including relevant links. If user want to file a complain tell them to visit this page:  'https://halle.se/dokument/' Never put emojis."""
 
 
 app = Flask(__name__)
@@ -35,10 +36,26 @@ def list_folders(directory_path):
         return False
 
 def load_chats():
-    file_path = f"{os.getcwd()}/conversations.json"
+    file_path = f"{os.getcwd()}/hallebot-backend/conversations.json"
     with open(file_path, 'r') as file:
         conversations = json.load(file)
     return conversations
+def add_target_blank(html_string):
+    pattern = r'(<a\s+[^>]*href=[\'"][^\'"]*[\'"])([^>]*)(>)'
+    
+    def add_target(match):
+        before_href = match.group(1)
+        after_href = match.group(2)
+        end_tag = match.group(3)
+    
+        if 'target=' not in after_href:
+            return f'{before_href}{after_href} target="_blank"{end_tag}'
+        else:
+            return match.group(0)
+
+    modified_html = re.sub(pattern, add_target, html_string)
+
+    return modified_html
 
 def generate_response(previous_history=[], vector_db_collection=None, language="english"):
     print("- GPT is Writing Answer...")
@@ -60,6 +77,7 @@ def generate_response(previous_history=[], vector_db_collection=None, language="
     print("Message Generated...")
     print("Sending Response back...")
     return answer
+
 
 @app.route('/v1/chatbot/<string:conversation_id>/chat', methods=['POST'])
 def chat(conversation_id):
@@ -85,7 +103,7 @@ def chat(conversation_id):
 
     embeddings = OpenAIEmbeddings()
     docs = None
-    persist_directory = f'{os.getcwd()}/database'  # f'database/{page_type}'
+    persist_directory = f'{os.getcwd()}/hallebot-backend/database'  # f'database/{page_type}'
     pdfs_indexes = list_folders(persist_directory)
     print(pdfs_indexes)
     if pdfs_indexes != False:
@@ -131,11 +149,11 @@ def chat(conversation_id):
                         {"role": "assistant", "content": message}
                     ]
                 }
-            file_path = f"{os.getcwd()}/conversations.json"
+            file_path = f"{os.getcwd()}/hallebot-backend/conversations.json"
             with open(file_path, 'w') as file:
                 json.dump(chats, file, indent=4)
 
-        successful_response = {'status': 200, 'message': markdown.markdown(message)[3:-4]}
+        successful_response = {'status': 200, 'message': add_target_blank(markdown.markdown(message)[3:-4])}
         return jsonify(successful_response), 200
     except Exception as e:
         print(str(e))
@@ -144,3 +162,4 @@ def chat(conversation_id):
 
 if __name__ == '__main__':
     app.run(debug=True)
+
